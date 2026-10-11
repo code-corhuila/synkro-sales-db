@@ -4,9 +4,9 @@ set -euo pipefail
 source "$(dirname "$0")/../ci-env.sh"
 require_disposable_database
 source deploy/ci/check-output.sh
+source deploy/ci/mongosh.sh
 admin() {
-  docker exec -i "$CI_MONGO_CONTAINER" mongosh --quiet \
-    "mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@localhost:27017/sales?authSource=admin" --file /dev/stdin
+  ci_mongosh admin
 }
 update() { timeout 120 docker compose --env-file .env.example -f deploy/compose.yml run --rm -T sales-db-migrate update; }
 reset_database() {
@@ -17,8 +17,7 @@ db.dropDatabase();
 JS
 }
 prepare_collection() {
-  docker exec -i -e DRIFT="$1" "$CI_MONGO_CONTAINER" mongosh --quiet \
-    "mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@localhost:27017/sales?authSource=admin" --file /dev/stdin <<'JS'
+  DRIFT="$1" ci_mongosh admin <<'JS'
 const fs = require('fs');
 const schema = JSON.parse(fs.readFileSync('/tmp/sale-validator.json', 'utf8'));
 const options = {validationLevel: 'strict', validationAction: 'error', validator: schema};
