@@ -23,6 +23,7 @@ jobs:
       - name: Regression checks without Docker
         run: |
           bash deploy/ci/tests/shell-regressions.sh
+          bash deploy/ci/tests/rebuild-regressions.sh
           node --test deploy/ci/tests/*.test.js
 
       - name: Start a fresh single-node replica set
