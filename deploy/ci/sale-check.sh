@@ -3,14 +3,13 @@
 set -euo pipefail
 source "$(dirname "$0")/ci-env.sh"
 source "$(dirname "$0")/check-output.sh"
+source "$(dirname "$0")/mongosh.sh"
 require_disposable_database
 RUNNER_TIMEOUT="${RUNNER_TIMEOUT:-120}"
 CASES_DIR="$(cd "$(dirname "$0")/sale" && pwd)"
 runner() { timeout "$RUNNER_TIMEOUT" docker compose --env-file .env.example -f deploy/compose.yml run --rm --build -T sales-db-migrate "$@" 2>&1; }
-as_admin() { docker exec -i -e PHASE="${PHASE:-all}" "$CI_MONGO_CONTAINER" mongosh --quiet --file /dev/stdin \
-  "mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@localhost:27017/sales?authSource=admin" < "$CASES_DIR/$1"; }
-as_sales_app() { docker exec -i "$CI_MONGO_CONTAINER" mongosh --quiet --file /dev/stdin \
-  "mongodb://sales_app:${CI_SALES_APP_PASSWORD:-ci-sales-app-pw}@localhost:27017/sales?authSource=admin" < "$CASES_DIR/$1"; }
+as_admin() { PHASE="${PHASE:-all}" ci_mongosh admin < "$CASES_DIR/$1"; }
+as_sales_app() { ci_mongosh sales_app < "$CASES_DIR/$1"; }
 check() {
   local label="$1"; shift
   echo "== $label"
