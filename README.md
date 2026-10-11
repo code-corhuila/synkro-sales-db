@@ -166,7 +166,7 @@ MongoDB failpoints are enabled exclusively in this throwaway instance.
 ```bash
 bash deploy/ci/tests/shell-regressions.sh
 bash deploy/ci/tests/rebuild-regressions.sh
-node --test deploy/ci/tests/*.test.js  # Node 22+, no dependencies
+node --test deploy/ci/tests/*.test.js  # Linux Node 22 (same major as CI), no dependencies
 
 # Use the same isolated environment variables as the bootstrap above.
 bash deploy/ci/rebuild-check.sh
@@ -175,8 +175,15 @@ bash deploy/ci/tests/integration-regressions.sh
 bash deploy/ci/sale-check.sh
 ```
 
-Run from the repository root with Git Bash or WSL on Windows. Database checks refuse
-targets without the disposable label, `/data/db` tmpfs mount and exact CI connection.
+Run from the repository root. For CI-equivalent verification on Windows, use WSL with
+Linux Node 22 available in that distribution's PATH. Running the subprocess and stdin
+checks with Windows Node 25 under Git Bash produced timeouts during local verification;
+the same 48 tests passed without skips with Linux Node 22 in WSL. A timeout is a failed
+check, not evidence that credentials are protected. The migration runner itself executes
+inside its pinned Linux image.
+
+Database checks refuse targets without the disposable label, `/data/db` tmpfs mount
+and exact CI connection.
 They ignore a local `.env`: `.env.example` supplies placeholders, overridden by the CI
 environment variables. The drift tests reset only this disposable database, compare
 collection UUIDs, validators, documents and privileges before/after rejection, and inject
