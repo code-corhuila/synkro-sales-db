@@ -1,1 +1,62 @@
-databaseChangeLog: []
+databaseChangeLog:
+  # Reused fragments of the validator. Global, so the other families can read them.
+  - property:
+      name: uuid_field
+      value: '{ "bsonType": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }'
+      global: true
+
+  # The collection is created together with its first validator (06-data/models.md).
+  # Any later validator change is a new changeset under 01_validators/ (collMod).
+  - changeSet:
+      id: sale-001-create-collection
+      author: SergioAndres17
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - collectionExists:
+                collectionName: sale
+      changes:
+        - createCollection:
+            collectionName: sale
+            options: |
+              {
+                "validationLevel": "strict",
+                "validationAction": "error",
+                "validator": {
+                  "$jsonSchema": {
+                    "bsonType": "object",
+                    "additionalProperties": false,
+                    "required": ["_id", "customerId", "createdBy", "date", "totalCents", "active", "idempotencyKey", "details"],
+                    "properties": {
+                      "_id": ${uuid_field},
+                      "customerId": ${uuid_field},
+                      "createdBy": ${uuid_field},
+                      "date": { "bsonType": "date" },
+                      "totalCents": { "bsonType": "long", "minimum": 0 },
+                      "active": { "bsonType": "bool" },
+                      "idempotencyKey": { "bsonType": "string", "minLength": 8, "maxLength": 128 },
+                      "details": {
+                        "bsonType": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                          "bsonType": "object",
+                          "additionalProperties": false,
+                          "required": ["detailId", "productId", "quantity", "unitPriceCents", "subtotalCents", "active"],
+                          "properties": {
+                            "detailId": ${uuid_field},
+                            "productId": ${uuid_field},
+                            "quantity": { "bsonType": "int", "minimum": 1 },
+                            "unitPriceCents": { "bsonType": "long", "minimum": 1 },
+                            "subtotalCents": { "bsonType": "long", "minimum": 1 },
+                            "active": { "bsonType": "bool" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+      rollback:
+        - dropCollection:
+            collectionName: sale
