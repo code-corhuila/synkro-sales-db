@@ -71,27 +71,88 @@ Running `update` a second time applies zero changesets. Liquibase keeps its hist
 `DATABASECHANGELOG` and `DATABASECHANGELOGLOCK` collections of the target database; those two are
 expected in an otherwise empty database.
 
+The Compose runner wraps `update` with read-only **preflight** and **postflight** checks
+(`deploy/migrate.sh`). Preflight rejects an existing incompatible `sale` validator, index,
+role or `sales_app` grant before the historical changesets can skip or overwrite it.
+Missing domain objects are allowed before migration; `sales_app` must already exist in
+`admin`, with no roles or only `sales_writer@sales`. Postflight requires the complete
+approved validator, the four exact indexes plus `_id_`, the exact reader/writer privileges,
+and only `sales_writer@sales` on the application user. No guard deletes or repairs drift.
+Object key order, required-field order and privilege action order do not imply drift;
+compound index key order does. Other structural differences fail conservatively.
+
+The validator is read from the immutable collection changeset and tested against a
+snapshot of `synkro-docs`' approved Sales model. All ten HU-VEN-05 changesets remain
+byte-for-byte unchanged, including `MARK_RAN` and `failOnError: false`. The wrapper checks
+the pinned Liquibase extension's exception output: a duplicate-role error (51002) is
+accepted only for the corresponding preflight-validated Sales role during `update`;
+unexpected suppressed failures and all suppressed rollback errors return nonzero.
+
+Use the Compose command above for supported updates, with connection configuration in
+the environment file. `update` accepts no extra flags, so a URL or changelog override cannot
+make the checks inspect another target. `status`, `history`, `validate`, `rollback-count`,
+`--help` and `--version` remain available. Direct Liquibase execution, another runner image
+or an entrypoint override bypasses these protections; hardening those paths would require
+changing historical checksums. Preflight is outside Liquibase's lock: serialize migrations
+and administrator DDL changes. A suppressed error is detected after Liquibase returns;
+earlier successful changesets can already have been applied. Inspect the reported failure
+before retrying; never clear checksums or rewrite applied history to make it pass.
+
+When compatible roles predate Liquibase, the historical `failOnError: false` creation
+changesets remain pending after their expected duplicate errors (the pinned extension
+does not record failed creations). Their definition is preserved and repeated updates
+apply zero changes. Their rollback lifecycle remains with their original owner; the CI
+full rollback checks start from a fresh database whose objects were created by Liquibase.
+
 An unreachable instance fails within `serverSelectionTimeoutMS` (5 s by default in
-`.env.example`) with a `MongoTimeoutException` and a non-zero exit code.
+`.env.example`) with `MongoServerSelectionError` from preflight or `MongoTimeoutException`
+from Liquibase, and a non-zero exit code.
 
 ### Throwaway replica set (no infrastructure repo at hand)
 
 ```bash
-deploy/ci/start-replica-set.sh   # rs0 on the `platform` network, access control on
+export CI_MONGO_CONTAINER=synkro-sales-ci-local
+export MONGODB_NETWORK=synkro-sales-ci-local
+export MSYS_NO_PATHCONV=1       # Git Bash on Windows only
+bash deploy/ci/start-replica-set.sh
 ```
 
 It creates the administrator `admin` / `ci-admin-pw` and the service user `sales_app` /
 `ci-sales-app-pw` (throwaway values, never use them elsewhere). The member host is
-`synkro-mongo:27017`, the name the runner dials. Use
-`MONGODB_URI=mongodb://admin:ci-admin-pw@synkro-mongo:27017` and
+`$CI_MONGO_CONTAINER:27017`, the name the runner dials. Use
+`MONGODB_URI=mongodb://admin:ci-admin-pw@$CI_MONGO_CONTAINER:27017` and
 `MONGODB_OPTIONS=replicaSet=rs0&authSource=admin&serverSelectionTimeoutMS=5000`.
+
+The bootstrap refuses any existing container with the selected name before making
+changes. It labels the new container as disposable and stores MongoDB data in `tmpfs`;
+it creates no persistent volumes and removes no container, network or volume. Defaults
+remain `synkro-mongo` and `platform`; select exclusive names locally as above. Test-only
+MongoDB failpoints are enabled exclusively in this throwaway instance.
 
 ### Checks
 
 ```bash
-deploy/ci/rebuild-check.sh   # apply, apply again (zero changes), invalid connection fails fast
-deploy/ci/start-replica-set.sh && deploy/ci/sale-check.sh   # sale validator, indexes, permissions, full rollback and re-apply
+bash deploy/ci/tests/shell-regressions.sh
+node --test deploy/ci/tests/*.test.js  # Node 22+, no dependencies
+
+# Use the same isolated environment variables as the bootstrap above.
+bash deploy/ci/rebuild-check.sh
+bash deploy/ci/tests/integration-regressions.sh
+bash deploy/ci/sale-check.sh
 ```
+
+Run from the repository root with Git Bash or WSL on Windows. Database checks refuse
+targets without the disposable label, `/data/db` tmpfs mount and exact CI connection.
+They ignore a local `.env`: `.env.example` supplies placeholders, overridden by the CI
+environment variables. The drift tests reset only this disposable database, compare
+collection UUIDs, validators, documents and privileges before/after rejection, and inject
+a real unexpected `createRole` failure. The sale check stops on a failed assertion or
+rollback before reapplication. A command must return zero and print no `FAIL` assertion
+to pass. CI starts its instance once and runs the same sequence without replacement.
+
+If a run fails, keep the temporary instance for diagnosis and use a new exclusive name
+for the next run. When finished, remove only the disposable container you created;
+never remove a preexisting instance, shared network or persistent volume.
 
 ### Sample sale documents (manual checks)
 

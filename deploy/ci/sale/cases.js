@@ -49,7 +49,9 @@ if (phase === "structure") {
 if (phase === "absent") {
   const cols = db.getCollectionNames().filter((n) => !n.startsWith("DATABASECHANGELOG"));
   const roles = db.getRoles().roles.length;
-  report(cols.length === 0 && roles === 0, "rollback: no collection, no role left", `collections=${cols} roles=${roles}`);
+  const user = db.getSiblingDB("admin").getUser("sales_app");
+  report(cols.length === 0 && roles === 0 && user && user.roles.length === 0,
+    "rollback: no collection, no role or grant left", `collections=${cols} roles=${roles}`);
   quit(failed ? 1 : 0);
 }
 
