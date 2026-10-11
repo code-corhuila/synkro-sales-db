@@ -4,3 +4,10 @@
 .idea/
 .DS_Store
 *.log
+*.pem
+*.key
+# build artifacts
+build/
+dist/
+out/
+*.tmp
