@@ -1,0 +1,22 @@
+name: db-ci
+
+on:
+  push:
+    branches: [develop, qa, main]
+  pull_request:
+    branches: [develop, qa, main]
+
+jobs:
+  migration-rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start a fresh single-node replica set
+        # A `services:` container cannot receive `--replSet rs0` (no command
+        # override), so the instance is started by script. See the script header.
+        run: deploy/ci/start-replica-set.sh
+
+      - name: Rebuild check - first apply, second apply, invalid connection
+        run: deploy/ci/rebuild-check.sh
