@@ -1,1 +1,51 @@
-databaseChangeLog: []
+databaseChangeLog:
+  # createIndex with an identical specification is a no-op in MongoDB, so each
+  # changeset is idempotent on its own.
+  - changeSet:
+      id: sale-002-index-date
+      author: SergioAndres17
+      changes:
+        - createIndex:
+            collectionName: sale
+            keys: '{ "date": -1 }'
+            options: '{ "name": "idx_sale_date" }'
+      rollback:
+        - dropIndex:
+            collectionName: sale
+            keys: '{ "date": -1 }'
+  - changeSet:
+      id: sale-003-index-created-by-date
+      author: SergioAndres17
+      changes:
+        - createIndex:
+            collectionName: sale
+            keys: '{ "createdBy": 1, "date": -1 }'
+            options: '{ "name": "idx_sale_created_by_date" }'
+      rollback:
+        - dropIndex:
+            collectionName: sale
+            keys: '{ "createdBy": 1, "date": -1 }'
+  - changeSet:
+      id: sale-004-index-customer-id-date
+      author: SergioAndres17
+      changes:
+        - createIndex:
+            collectionName: sale
+            keys: '{ "customerId": 1, "date": -1 }'
+            options: '{ "name": "idx_sale_customer_id_date" }'
+      rollback:
+        - dropIndex:
+            collectionName: sale
+            keys: '{ "customerId": 1, "date": -1 }'
+  - changeSet:
+      id: sale-005-index-idempotency-key
+      author: SergioAndres17
+      changes:
+        - createIndex:
+            collectionName: sale
+            keys: '{ "idempotencyKey": 1 }'
+            options: '{ "name": "uq_sale_idempotency_key", "unique": true }'
+      rollback:
+        - dropIndex:
+            collectionName: sale
+            keys: '{ "idempotencyKey": 1 }'
