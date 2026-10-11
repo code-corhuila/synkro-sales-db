@@ -59,5 +59,7 @@ echo "case 3: runner exited $status in ${elapsed}s (outer timeout: ${RUNNER_TIME
 print_output "$out"
 [ "$status" -ne 0 ] || fail "case 3: runner succeeded against an invalid host"
 [ "$status" -ne 124 ] || fail "case 3: runner hung until the ${RUNNER_TIMEOUT}s timeout" "$status"
-grep -Eq 'MongoTimeoutException|MongoServerSelectionError' <<< "$out" || fail "case 3: failure is not the identifiable connection error" "$status"
+# GitHub's DNS resolver can fail immediately instead of timing out in server
+# selection. Only accept that network diagnostic for the deliberate test host.
+grep -Eq 'MongoTimeoutException|MongoServerSelectionError|^MongoNetworkError: getaddrinfo ENOTFOUND no-such-host[[:space:]]*$' <<< "$out" || fail "case 3: failure is not the identifiable connection error" "$status"
 echo "PASS case 3: runner failed with exit $status in ${elapsed}s (MongoDB connection error)"
