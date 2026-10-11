@@ -40,8 +40,15 @@ deploy/  liquibase.Dockerfile, compose.yml   # the runner only
 
 Each family folder has its own `changelog.yaml`; `01_ddl/`, `02_dml/` and `03_dcl/` have an
 aggregator that includes their sub-folders in order. There is no folder for foreign keys: MongoDB
-has none. The families are empty for now; the `sale` collection and its validator arrive with
-HU-VEN-05.
+has none. The `sale` collection (with its validator), its four indexes, the roles `sales_reader` and
+`sales_writer` and the grant to `sales_app` live in `01_ddl/00_collections`, `01_ddl/02_indexes` and
+`03_dcl/00_roles`. The other families are still empty. A later validator change is a new `collMod`
+changeset under `01_ddl/01_validators/`, never an edit of the one that created the collection.
+
+Every changeset can be re-run on its own and declares its reversal inline (`rollback:`). The grant
+fails when `sales_app` does not exist: the instance's bootstrap (`synkro-infra-mongo`) creates it.
+`subtotalCents = quantity * unitPriceCents` and `totalCents = sum(subtotalCents)` are **not** checked
+here: the validator only checks types and ranges, `synkro-sales-api` enforces the arithmetic.
 
 ### Run the migrations locally
 
@@ -70,12 +77,43 @@ An unreachable instance fails within `serverSelectionTimeoutMS` (5 s by default 
 ### Throwaway replica set (no infrastructure repo at hand)
 
 ```bash
-docker network create platform
-docker run -d --name synkro-mongo --network platform mongo:7.0 --replSet rs0 --bind_ip_all
-docker exec synkro-mongo mongosh --quiet --eval \
-  'rs.initiate({_id:"rs0",members:[{_id:0,host:"synkro-mongo:27017"}]})'
+deploy/ci/start-replica-set.sh   # rs0 on the `platform` network, access control on
 ```
 
-The member host must be `synkro-mongo:27017`, the name the runner dials; the default (the
-container ID) is not resolvable from another container. This instance has no access control, so
-use `MONGODB_URI=mongodb://synkro-mongo:27017`.
+It creates the administrator `admin` / `ci-admin-pw` and the service user `sales_app` /
+`ci-sales-app-pw` (throwaway values, never use them elsewhere). The member host is
+`synkro-mongo:27017`, the name the runner dials. Use
+`MONGODB_URI=mongodb://admin:ci-admin-pw@synkro-mongo:27017` and
+`MONGODB_OPTIONS=replicaSet=rs0&authSource=admin&serverSelectionTimeoutMS=5000`.
+
+### Checks
+
+```bash
+deploy/ci/rebuild-check.sh   # apply, apply again (zero changes), invalid connection fails fast
+deploy/ci/start-replica-set.sh && deploy/ci/sale-check.sh   # sale validator, indexes, permissions, full rollback and re-apply
+```
+
+### Sample sale documents (manual checks)
+
+Connect as the administrator (`mongosh "mongodb://admin:ci-admin-pw@localhost:27017/sales?authSource=admin"`
+inside the container). Numbers must be typed: `totalCents`, `unitPriceCents` and `subtotalCents` are
+`long`, `quantity` is `int`, `date` is a date.
+
+Valid (accepted):
+
+```js
+db.sale.insertOne({
+  _id: "5f0c1e3a-8b7d-4c21-9a55-0d1e2f3a4b5c",
+  customerId: "a1b2c3d4-0000-4000-8000-000000000001",
+  createdBy: "a1b2c3d4-0000-4000-8000-000000000002",
+  date: new Date(), totalCents: Long("1000"), active: true, idempotencyKey: "retry-key-0001",
+  details: [{ detailId: "a1b2c3d4-0000-4000-8000-000000000003", productId: "a1b2c3d4-0000-4000-8000-000000000004",
+              quantity: Int32(2), unitPriceCents: Long("500"), subtotalCents: Long("1000"), active: true }]
+})
+```
+
+Invalid (each fails with `Document failed validation`, code 121): an undeclared field (`extra: 1`) at
+the document or line level; a non-UUID `_id`, `customerId`, `createdBy`, `productId` or `detailId`
+(for example `"not-a-uuid"`); `totalCents: "1000"` or `active: "true"`; `details: []`; 101 lines;
+`quantity: Int32(0)`, `unitPriceCents: Long("0")` or `subtotalCents: Long("0")`. Inserting a second
+sale with the same `idempotencyKey` fails with code 11000 on `uq_sale_idempotency_key`.
