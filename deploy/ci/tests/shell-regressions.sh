@@ -16,17 +16,14 @@ fi
 silent_error() { echo 'MongoServerError: connection closed'; return 17; }
 assertion_error() { echo 'FAIL validator assertion'; return 0; }
 success() { echo 'PASS validator assertion'; return 0; }
-ignored_error() { echo 'Changeset sale-006 failed, but failOnError was false. Error: not authorized'; return 0; }
 rejects_command_error() { ! no_fail_lines silent_error; }
 rejects_assertion_error() { ! no_fail_lines assertion_error; }
 expect 'nonzero exit without FAIL is rejected' rejects_command_error
 expect 'FAIL assertion with exit zero is rejected' rejects_assertion_error
 expect 'successful assertions are accepted' no_fail_lines success
-rejects_ignored_error() { ! no_fail_lines ignored_error; }
-expect 'unexpected suppressed Liquibase failure is rejected' rejects_ignored_error
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -f "$tmp/bin/docker" "$tmp/bin/sleep" "$tmp/docker.log" "$tmp/sale.out" "$tmp/start.out"; rmdir "$tmp/bin" "$tmp"' EXIT
 mkdir "$tmp/bin"
 cat > "$tmp/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
@@ -34,8 +31,13 @@ echo "$*" >> "$MOCK_LOG"
 case "$*" in
   *'container inspect'*|*'inspect synkro-mongo'*)
     # Safe check scripts require an explicitly disposable labelled container.
-    echo 'true'; exit 0 ;;
-  *'compose'*'rollback-count'*) echo 'MongoServerError: rollback denied'; exit 23 ;;
+    if [[ "$*" == *'Tmpfs'* ]]; then echo 'tmpfs'; else echo 'true'; fi
+    exit 0 ;;
+  *'compose'*'rollback-count'*)
+    if [[ "${MOCK_ROLLBACK_MODE:-exit}" == suppressed ]]; then
+      echo 'ChangeSet sale-008 failed, but failOnError was false. Error: rollback denied'; exit 0
+    fi
+    echo 'MongoServerError: rollback denied'; exit 23 ;;
   *'compose'*) echo 'UPDATE SUMMARY'; echo 'Run: 0'; exit 0 ;;
   *'exec'*) cat >/dev/null; echo 'PASS simulated assertion'; exit 0 ;;
   *'network inspect'*) exit 0 ;;
@@ -63,5 +65,8 @@ existing_container_safe() {
   [[ $status -ne 0 ]] && ! grep -Eq '(^rm |^run |^exec |^restart |^network create)' "$MOCK_LOG"
 }
 expect 'failed rollback stops before reapplication' rollback_stops
+export MOCK_ROLLBACK_MODE=suppressed
+expect 'suppressed rollback failure stops before reapplication' rollback_stops
+unset MOCK_ROLLBACK_MODE
 expect 'bootstrap refuses any existing container before mutation' existing_container_safe
 [[ $failed -eq 0 ]]
