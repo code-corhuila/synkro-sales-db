@@ -6,10 +6,13 @@ on:
   pull_request:
     branches: [develop, qa, main]
 
+permissions:
+  contents: read
+
 jobs:
   migration-rebuild:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CI_MONGO_CONTAINER: synkro-sales-ci-${{ github.run_id }}-${{ github.run_attempt }}
       MONGODB_NETWORK: synkro-sales-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -26,9 +29,14 @@ jobs:
           bash deploy/ci/tests/rebuild-regressions.sh
           node --test deploy/ci/tests/*.test.js
 
+      - name: Generate disposable credentials with reserved characters
+        # These generated test values never authenticate to persistent infrastructure.
+        run: |
+          printf 'CI_ADMIN_PASSWORD=%s\n' "$(node deploy/ci/test-password.js)" >> "$GITHUB_ENV"
+          printf 'CI_SALES_APP_PASSWORD=%s\n' "$(node deploy/ci/test-password.js)" >> "$GITHUB_ENV"
+
       - name: Start a fresh single-node replica set
-        # A `services:` container cannot receive `--replSet rs0` (no command
-        # override), so the instance is started by script. See the script header.
+        # A services container cannot override mongod's replica-set command.
         run: deploy/ci/start-replica-set.sh
 
       - name: Rebuild check - first apply, second apply, invalid connection
@@ -37,6 +45,16 @@ jobs:
       - name: Migration drift and unexpected MongoDB command errors
         run: bash deploy/ci/tests/integration-regressions.sh
 
+      - name: Credentials, real process arguments and sanitized failures
+        run: bash deploy/ci/tests/credential-integration.sh
+
       - name: Sale collection - validator, indexes, permissions, full rollback and re-apply
         run: |
           deploy/ci/sale-check.sh
+
+      - name: Remove only resources owned by this test execution
+        if: always()
+        run: |
+          if docker container inspect "$CI_MONGO_CONTAINER" > /dev/null 2>&1; then
+            bash deploy/ci/cleanup-replica-set.sh
+          fi
