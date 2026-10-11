@@ -2,7 +2,7 @@
 # No real Docker calls: deliberately failing command doubles exercise the scripts.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../../.." && pwd)
-cd "$root"
+cd "$root" || exit 1
 failed=0
 expect() {
   local label="$1"; shift
@@ -55,6 +55,7 @@ rollback_stops() {
   CI_MONGO_CONTAINER=synkro-mongo bash deploy/ci/sale-check.sh > "$tmp/sale.out" 2>&1
   local status=$?
   [[ $status -ne 0 ]] || return 1
+  grep -q 'rollback denied' "$tmp/sale.out" || return 1
   # There must be no update after the rollback command.
   ! awk '/rollback-count/ { rollback=1; next } rollback && /compose.*update/ { bad=1 } END { exit !bad }' "$MOCK_LOG"
 }
