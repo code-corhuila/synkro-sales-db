@@ -9,9 +9,21 @@ on:
 jobs:
   migration-rebuild:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      CI_MONGO_CONTAINER: synkro-sales-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      MONGODB_NETWORK: synkro-sales-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Regression checks without Docker
+        run: |
+          bash deploy/ci/tests/shell-regressions.sh
+          node --test deploy/ci/tests/*.test.js
 
       - name: Start a fresh single-node replica set
         # A `services:` container cannot receive `--replSet rs0` (no command
@@ -21,8 +33,9 @@ jobs:
       - name: Rebuild check - first apply, second apply, invalid connection
         run: deploy/ci/rebuild-check.sh
 
+      - name: Migration drift and unexpected MongoDB command errors
+        run: bash deploy/ci/tests/integration-regressions.sh
+
       - name: Sale collection - validator, indexes, permissions, full rollback and re-apply
-        # Starts its own replica set so it begins from an empty database.
         run: |
-          deploy/ci/start-replica-set.sh
           deploy/ci/sale-check.sh
