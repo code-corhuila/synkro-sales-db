@@ -25,29 +25,40 @@ const fs = require('fs'), vm = require('vm');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.ARG_LOG, JSON.stringify({tool: process.argv[1], args, phase:process.env.SALES_VALIDATION_PHASE})+'\\n');
 if (process.argv[1].endsWith('liquibase')) {
-  const stat = fs.statSync('/dev/null');
+  if (['JAVA_OPTS','JAVA_TOOL_OPTIONS','_JAVA_OPTIONS','JDK_JAVA_OPTIONS'].some(name => process.env[name])) process.exit(97);
+  if (process.platform !== 'win32') {
+    for (const directory of fs.readdirSync(process.env.TMPDIR)) {
+      const base = process.env.TMPDIR+'/'+directory;
+      if ((fs.statSync(base).mode & 0o777) !== 0o700) process.exit(98);
+      for (const file of fs.readdirSync(base)) if ((fs.statSync(base+'/'+file).mode & 0o777) !== 0o600) process.exit(99);
+    }
+  }
   console.log('Authentication diagnostic '+process.env.TEST_SECRET+' '+encodeURIComponent(process.env.TEST_SECRET)+' '+process.env.LIQUIBASE_COMMAND_URL);
-  if (process.env.TEST_MODE === 'liquibase-error') process.exit(19);
+  if (process.env.TEST_MODE.includes('liquibase-error')) process.exit(19);
   if (process.env.TEST_MODE === 'suppressed') console.log('Changeset sale-006 failed, but failOnError was false. Error: not authorized '+process.env.LIQUIBASE_COMMAND_URL);
   else console.log('UPDATE SUMMARY\\nRun: 0');
 } else {
   const file = args[args.indexOf('--file')+1];
+  if (file.endsWith('publish-output.js') && process.env.TEST_MODE.includes('sanitizer-error')) process.exit(9);
   if (file.endsWith('validate-state.js')) {
     console.log('MongoServerSelectionError: '+process.env.TEST_SECRET+' '+process.env.LIQUIBASE_COMMAND_URL);
     if (process.env.TEST_MODE === process.env.SALES_VALIDATION_PHASE+'-error') process.exit(17);
   } else {
     global.print = console.log;
+    global.require = require;
     global.quit = code => process.exit(code);
     vm.runInThisContext(fs.readFileSync(file, 'utf8'), {filename:file});
   }
 }
 `;
-    // On Windows Node cannot stat a POSIX device; no fixture needs that call.
-    for (const file of ['bin/mongosh', 'liquibase']) fs.writeFileSync(path.join(dir, file), double.replace("  const stat = fs.statSync('/dev/null');\n", ''), {mode: 0o755});
+    for (const file of ['bin/mongosh', 'liquibase']) fs.writeFileSync(path.join(dir, file), double, {mode: 0o755});
+    if (mode === 'termination') fs.writeFileSync(path.join(dir, 'liquibase'), '#!/usr/bin/env bash\nkill -TERM "$PPID"\nsleep 1\n', {mode:0o755});
     const result = spawnSync(bash, [shellPath(path.join(dir, 'runner.sh')), ...args], {
       cwd: root, encoding: 'utf8', timeout: 15000,
       env: {...process.env, PATH: `${shellPath(path.join(dir, 'bin'))}:${shellPath(path.dirname(process.execPath))}:${process.env.PATH}`,
         LIQUIBASE_COMMAND_URL: configured ? uri : '', TEST_SECRET: secret, TEST_MODE: mode,
+        JAVA_OPTS:'-Dsentinel='+secret, JAVA_TOOL_OPTIONS:'-Dsentinel='+secret,
+        _JAVA_OPTIONS:'-Dsentinel='+secret, JDK_JAVA_OPTIONS:'-Dsentinel='+secret,
         ARG_LOG: path.join(dir, 'args.jsonl'), TMPDIR: shellPath(path.join(dir, 'tmp'))},
     });
     const calls = fs.existsSync(path.join(dir, 'args.jsonl')) ? fs.readFileSync(path.join(dir, 'args.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) : [];
@@ -70,6 +81,7 @@ test('preflight, Liquibase and postflight arguments and success output protect c
 for (const [mode, status, diagnostic] of [
   ['preflight-error', 17, 'MongoServerSelectionError'], ['postflight-error', 17, 'MongoServerSelectionError'],
   ['liquibase-error', 19, 'Authentication'], ['suppressed', 1, 'unexpected suppressed migration error'],
+  ['sanitizer-error', 9, 'DiagnosticError'], ['termination', 143, 'MongoServerSelectionError'],
 ]) test(`${mode} preserves failure and sanitized classification`, () => {
   const result = run(['update'], mode);
   assert.equal(result.status, status);
@@ -81,6 +93,11 @@ test('missing configuration fails safely before any connection', () => {
   assert.notEqual(result.status, 0);
   assert.ok(result.output.includes('LIQUIBASE_COMMAND_URL'));
   assert.equal(result.calls.length, 0);
+});
+test('sanitizer failure preserves the underlying Liquibase failure status', () => {
+  const result = run(['status'], 'liquibase-error+sanitizer-error');
+  assert.equal(result.status, 19);
+  assert.ok(result.output.includes('DiagnosticError'));
 });
 for (const args of [['status', '--verbose'], ['history'], ['validate'], ['rollback-count', '--count=10'], ['--help'], ['--version']]) {
   test(`${args[0]} output is sanitized`, () => assert.equal(run(args).status, 0));
