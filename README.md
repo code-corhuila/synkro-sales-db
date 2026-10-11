@@ -91,7 +91,10 @@ unexpected suppressed failures and all suppressed rollback errors return nonzero
 Use the Compose command above for supported updates, with connection configuration in
 the environment file. `update` accepts no extra flags, so a URL or changelog override cannot
 make the checks inspect another target. `status`, `history`, `validate`, `rollback-count`,
-`--help` and `--version` remain available. Direct Liquibase execution, another runner image
+`--help` and `--version` remain available. `status` accepts only `--verbose`, and
+`rollback-count` requires `--count=N`; other supported commands accept no extra flags.
+Connection, password, defaults-file and JVM overrides cannot enter command arguments.
+Direct Liquibase execution, another runner image
 or an entrypoint override bypasses these protections; hardening those paths would require
 changing historical checksums. Preflight is outside Liquibase's lock: serialize migrations
 and administrator DDL changes. A suppressed error is detected after Liquibase returns;
@@ -107,6 +110,35 @@ full rollback checks start from a fresh database whose objects were created by L
 An unreachable instance fails within `serverSelectionTimeoutMS` (5 s by default in
 `.env.example`) with `MongoServerSelectionError` from preflight or `MongoTimeoutException`
 from Liquibase, and a non-zero exit code.
+
+### Credential delivery (HU-VEN-16, synkro-docs#237)
+
+Compose assembles **one** `LIQUIBASE_COMMAND_URL` from the environment configuration.
+Liquibase consumes it directly; preflight and postflight run `mongosh --nodb --quiet
+--file ...` and call `connect(process.env.LIQUIBASE_COMMAND_URL)`. The URI is never
+inserted into script source, `--eval`, process arguments or Java properties. The pinned
+Liquibase 4.31.1 launcher and extension 4.29.1 remain unchanged; inherited JVM option
+variables are disabled by the supported wrapper. The shipped mongosh 2.12.0 scripting
+API is covered by real-image tests.
+
+Supply credentials through the environment's secret store or an ignored environment
+file readable only by its owner (`chmod 600` on Unix; equivalent owner-only ACL on
+Windows). URI-encode the username/password components, including reserved characters,
+before filling `MONGODB_URI`; retain `authSource=admin` and `replicaSet=rs0` in
+`MONGODB_OPTIONS`. Bootstrap must have created `sales_app` in `admin`. Never pass a
+password, authenticated URI, or a literal secret assignment as a Docker argument.
+Pass environment **names**, for example `-e LIQUIBASE_COMMAND_URL`, when using Docker
+directly for disposable verification. Avoid shell tracing and publishing `compose config`
+or Docker environment inspection output with real credentials.
+
+Every supported command publishes sanitized stdout/stderr. Literal passwords, encoded
+representations and MongoDB URIs are masked while authentication, connectivity,
+structural validation and suppressed-error classifications remain visible. Raw diagnostics
+stay in a private temporary directory (0700, files 0600); the wrapper removes them on
+success, failure, SIGINT and SIGTERM. Sanitization failures fail closed; the underlying
+operation's failure status is preserved. This does not protect environment variables
+from a privileged host/container administrator or a compromised process with access
+to that environment. SIGKILL cannot run cleanup handlers; use ephemeral runner containers.
 
 ### Throwaway replica set (no infrastructure repo at hand)
 
@@ -133,16 +165,25 @@ MongoDB failpoints are enabled exclusively in this throwaway instance.
 
 ```bash
 bash deploy/ci/tests/shell-regressions.sh
-node --test deploy/ci/tests/*.test.js  # Node 22+, no dependencies
+bash deploy/ci/tests/rebuild-regressions.sh
+node --test deploy/ci/tests/*.test.js  # Linux Node 22 (same major as CI), no dependencies
 
 # Use the same isolated environment variables as the bootstrap above.
 bash deploy/ci/rebuild-check.sh
+bash deploy/ci/tests/credential-integration.sh
 bash deploy/ci/tests/integration-regressions.sh
 bash deploy/ci/sale-check.sh
 ```
 
-Run from the repository root with Git Bash or WSL on Windows. Database checks refuse
-targets without the disposable label, `/data/db` tmpfs mount and exact CI connection.
+Run from the repository root. For CI-equivalent verification on Windows, use WSL with
+Linux Node 22 available in that distribution's PATH. Running the subprocess and stdin
+checks with Windows Node 25 under Git Bash produced timeouts during local verification;
+the same 48 tests passed without skips with Linux Node 22 in WSL. A timeout is a failed
+check, not evidence that credentials are protected. The migration runner itself executes
+inside its pinned Linux image.
+
+Database checks refuse targets without the disposable label, `/data/db` tmpfs mount
+and exact CI connection.
 They ignore a local `.env`: `.env.example` supplies placeholders, overridden by the CI
 environment variables. The drift tests reset only this disposable database, compare
 collection UUIDs, validators, documents and privileges before/after rejection, and inject
@@ -154,10 +195,20 @@ If a run fails, keep the temporary instance for diagnosis and use a new exclusiv
 for the next run. When finished, remove only the disposable container you created;
 never remove a preexisting instance, shared network or persistent volume.
 
+Credential integration captures real `/proc` arguments for Bash, mongosh and Java,
+checks private diagnostic permissions and cleanup, tests encoded reserved characters,
+and verifies sanitized authentication/connection failures within a 90-second outer limit.
+CI generates distinct test-only passwords with `deploy/ci/test-password.js` **before**
+bootstrap and uses them throughout the rebuild, drift and sale checks. Docker/setup
+failures are fatal; integration checks are never skipped. Both workflows have explicit
+timeouts and read-only repository permissions. `deploy/ci/cleanup-replica-set.sh` refuses
+resources without the disposable tmpfs safeguards and this execution's ownership label.
+
 ### Sample sale documents (manual checks)
 
-Connect as the administrator (`mongosh "mongodb://admin:ci-admin-pw@localhost:27017/sales?authSource=admin"`
-inside the container). Numbers must be typed: `totalCents`, `unitPriceCents` and `subtotalCents` are
+For the disposable replica set, source `deploy/ci/ci-env.sh` and `deploy/ci/mongosh.sh`,
+then feed a script through `ci_mongosh admin` (or `ci_mongosh sales_app`). The helper
+connects using environment data and sanitized output. Numbers must be typed: `totalCents`, `unitPriceCents` and `subtotalCents` are
 `long`, `quantity` is `int`, `date` is a date.
 
 Valid (accepted):
