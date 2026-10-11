@@ -36,14 +36,14 @@ function database(s) {
   };
 }
 test('guard uses the exact approved model', () => assert.deepEqual(guard().collectionOptions().validator, model));
-test('fresh database permits preflight, requires final objects', () => {
+test('fresh database permits preflight, requires final objects', async () => {
   const s = state(); s.collection = null; s.roles = []; s.user.roles = []; s.indexes = [];
-  guard().validateState(database(s), 'preflight');
-  assert.throws(() => guard().validateState(database(s), 'postflight'));
+  await guard().validateState(database(s), 'preflight');
+  await assert.rejects(() => guard().validateState(database(s), 'postflight'));
 });
-test('compatible collection, roles and grant pass without mutations', () => {
+test('compatible collection, roles and grant pass without mutations', async () => {
   const s = state(); const before = clone(s);
-  guard().validateState(database(s), 'preflight'); guard().validateState(database(s), 'postflight');
+  await guard().validateState(database(s), 'preflight'); await guard().validateState(database(s), 'postflight');
   assert.deepEqual(s, before);
 });
 const drift = {
@@ -59,28 +59,28 @@ const drift = {
   'wrong compound index order': s => { s.indexes[2].key = { date: -1, createdBy: 1 }; },
   'wrong index options': s => { s.indexes[4].partialFilterExpression = { active: true }; },
 };
-for (const [name, mutate] of Object.entries(drift)) test(`rejects ${name} without changing state`, () => {
+for (const [name, mutate] of Object.entries(drift)) test(`rejects ${name} without changing state`, async () => {
   const s = state(); mutate(s); const before = clone(s);
-  assert.throws(() => guard().validateState(database(s), 'preflight'), /incompatible/);
+  await assert.rejects(() => guard().validateState(database(s), 'preflight'), /incompatible/);
   assert.deepEqual(s, before);
 });
-test('unexpected MongoDB command result fails visibly', () => {
+test('unexpected MongoDB command result fails visibly', async () => {
   const db = database(state()); db.runCommand = () => ({ ok: 0, code: 13, errmsg: 'not authorized' });
-  assert.throws(() => guard().validateState(db, 'preflight'), /not authorized/);
+  await assert.rejects(() => guard().validateState(db, 'preflight'), /not authorized/);
 });
-test('unexpected MongoDB thrown exception propagates', () => {
+test('unexpected MongoDB thrown exception propagates', async () => {
   const db = database(state()); db.runCommand = () => { throw new Error('connection closed'); };
-  assert.throws(() => guard().validateState(db, 'preflight'), /connection closed/);
+  await assert.rejects(() => guard().validateState(db, 'preflight'), /connection closed/);
 });
-test('postflight rejects missing role or missing grant', () => {
+test('postflight rejects missing role or missing grant', async () => {
   const validate = guard().validateState;
   const s = state(); s.roles.pop();
-  assert.throws(() => validate(database(s), 'postflight'));
+  await assert.rejects(() => validate(database(s), 'postflight'));
   s.roles = state().roles; s.user.roles = [];
-  assert.throws(() => validate(database(s), 'postflight'));
+  await assert.rejects(() => validate(database(s), 'postflight'));
 });
-test('schema key and required-field ordering do not imply drift', () => {
+test('schema key and required-field ordering do not imply drift', async () => {
   const s = state(); s.collection.options.validator.$jsonSchema.required.reverse();
   s.roles[1].privileges[0].actions.reverse();
-  guard().validateState(database(s), 'preflight');
+  await guard().validateState(database(s), 'preflight');
 });
