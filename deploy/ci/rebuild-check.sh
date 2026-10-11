@@ -3,9 +3,9 @@
 # start-replica-set.sh. Run from the repository root.
 set -uo pipefail
 
-export MONGODB_URI="${MONGODB_URI:-mongodb://synkro-mongo:27017}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@synkro-mongo:27017}"
 export MONGODB_DATABASE="${MONGODB_DATABASE:-sales}"
-export MONGODB_OPTIONS="${MONGODB_OPTIONS:-replicaSet=rs0&serverSelectionTimeoutMS=5000}"
+export MONGODB_OPTIONS="${MONGODB_OPTIONS:-replicaSet=rs0&authSource=admin&serverSelectionTimeoutMS=5000}"
 RUNNER_TIMEOUT="${RUNNER_TIMEOUT:-90}"
 
 run_migrations() {
