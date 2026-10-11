@@ -8,11 +8,12 @@ admin() {
   docker exec -i "$CI_MONGO_CONTAINER" mongosh --quiet \
     "mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@localhost:27017/sales?authSource=admin" --file /dev/stdin
 }
-update() { timeout 120 docker compose --env-file /dev/null -f deploy/compose.yml run --rm -T sales-db-migrate update; }
+update() { timeout 120 docker compose --env-file .env.example -f deploy/compose.yml run --rm -T sales-db-migrate update; }
 reset_database() {
   admin <<'JS'
-db.dropDatabase();
 db.getSiblingDB('admin').updateUser('sales_app', {roles: []});
+db.dropAllRoles();
+db.dropDatabase();
 JS
 }
 prepare_collection() {
@@ -34,7 +35,7 @@ JS
 snapshot() {
   admin <<'JS'
 print(EJSON.stringify({collection: db.getCollectionInfos({name:'sale'})[0], docs: db.sale.find().toArray(),
-  roles: db.getRoles({showPrivileges:true}), user: db.getSiblingDB('admin').getUser('sales_app')}));
+  roles: db.getRoles({showPrivileges:true}).roles, user: db.getSiblingDB('admin').getUser('sales_app')}));
 JS
 }
 tmp=$(mktemp -d)
@@ -73,6 +74,9 @@ admin <<'JS'
 if (db.sale.countDocuments({_id:'drift-sentinel'}) !== 1) throw new Error('compatible collection was replaced');
 JS
 echo 'PASS compatible existing collection and roles migrate safely'
+update > "$tmp/update" 2>&1
+grep -Eq 'Run:[[:space:]]+0$' "$tmp/update"
+echo 'PASS compatible existing roles apply zero changes on repeat'
 
 # A real server failure in createRole while compatible roles exist used to be
 # suppressed, followed by successful updateRole. enableTestCommands is CI-only.
@@ -88,5 +92,19 @@ admin <<'JS'
 db.adminCommand({configureFailPoint:'failCommand', mode:'off'});
 JS
 echo 'PASS unexpected real createRole failure propagates'
+reset_database
+
+# Confirm the real rollback error also stops the sale-check orchestration.
+update > "$tmp/update" 2>&1
+admin <<'JS'
+db.adminCommand({configureFailPoint:'failCommand', mode:{times:1}, data:{failCommands:['dropRole'], errorCode:13}});
+JS
+if bash deploy/ci/sale-check.sh > "$tmp/update" 2>&1; then echo 'FAIL accepted unexpected rollback error'; exit 1; fi
+grep -q 'Command failed with error 13' "$tmp/update"
+if grep -q '== case 6: re-apply' "$tmp/update"; then echo 'FAIL reapplied after failed rollback'; exit 1; fi
+admin <<'JS'
+db.adminCommand({configureFailPoint:'failCommand', mode:'off'});
+JS
+echo 'PASS real failed rollback returns nonzero and prevents reapplication'
 reset_database
 echo 'ALL MIGRATION REGRESSIONS PASSED'
