@@ -15,6 +15,10 @@ case "$*" in
       [[ $MONGODB_OPTIONS == 'replicaSet=rs0&authSource=admin&serverSelectionTimeoutMS=5000' ]] || exit 90
       case "$MOCK_FAILURE" in
         connection) echo 'MongoServerSelectionError: Server selection timed out after 5000 ms'; exit 1 ;;
+        dns) echo 'MongoNetworkError: getaddrinfo ENOTFOUND no-such-host'; exit 1 ;;
+        dns-unrelated) echo 'MongoNetworkError: getaddrinfo ENOTFOUND unrelated-host'; exit 19 ;;
+        dns-prefix) echo 'MongoNetworkError: getaddrinfo ENOTFOUND no-such-host-backup'; exit 19 ;;
+        network-other) echo 'MongoNetworkError: connect ECONNREFUSED no-such-host:27017'; exit 19 ;;
         compose) echo 'Compose interpolation failed: missing MONGODB_DATABASE'; exit 14 ;;
         startup) echo 'OCI runtime create failed: bash executable not found'; exit 127 ;;
         timeout) echo 'MongoServerSelectionError: still waiting'; exit 124 ;;
@@ -67,6 +71,10 @@ check() {
   echo "PASS $mode: exit $status, expected diagnostic, credentials protected"
 }
 check connection 0 'PASS case 3:'
+check dns 0 'PASS case 3:'
+check dns-unrelated 19 'failure is not the identifiable connection error'
+check dns-prefix 19 'failure is not the identifiable connection error'
+check network-other 19 'failure is not the identifiable connection error'
 check compose 14 'Compose interpolation failed: missing MONGODB_DATABASE'
 check startup 127 'OCI runtime create failed: bash executable not found'
 check timeout 124 'runner hung until the 9s timeout'
