@@ -1,0 +1,34 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "additionalProperties": false,
+    "required": ["_id", "customerId", "createdBy", "date", "totalCents", "active", "idempotencyKey", "details"],
+    "properties": {
+      "_id":            { "bsonType": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+      "customerId":     { "bsonType": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+      "createdBy":      { "bsonType": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+      "date":           { "bsonType": "date" },
+      "totalCents":     { "bsonType": "long", "minimum": 0 },
+      "active":         { "bsonType": "bool" },
+      "idempotencyKey": { "bsonType": "string", "minLength": 8, "maxLength": 128 },
+      "details": {
+        "bsonType": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "bsonType": "object",
+          "additionalProperties": false,
+          "required": ["detailId", "productId", "quantity", "unitPriceCents", "subtotalCents", "active"],
+          "properties": {
+            "detailId":       { "bsonType": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+            "productId":      { "bsonType": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+            "quantity":       { "bsonType": "int",  "minimum": 1 },
+            "unitPriceCents": { "bsonType": "long", "minimum": 1 },
+            "subtotalCents":  { "bsonType": "long", "minimum": 1 },
+            "active":         { "bsonType": "bool" }
+          }
+        }
+      }
+    }
+  }
+}
