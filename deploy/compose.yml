@@ -21,3 +21,4 @@ services:
 networks:
   platform:
     external: true
+    name: ${MONGODB_NETWORK:-platform}
