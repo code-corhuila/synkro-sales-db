@@ -20,3 +20,9 @@ jobs:
 
       - name: Rebuild check - first apply, second apply, invalid connection
         run: deploy/ci/rebuild-check.sh
+
+      - name: Sale collection - validator, indexes, permissions, full rollback and re-apply
+        # Starts its own replica set so it begins from an empty database.
+        run: |
+          deploy/ci/start-replica-set.sh
+          deploy/ci/sale-check.sh
