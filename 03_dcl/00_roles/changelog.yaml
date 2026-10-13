@@ -1,0 +1,54 @@
+databaseChangeLog:
+  # Roles live in the `sales` database and have no password. createRole fails when
+  # the role exists, so each creation tolerates that failure and the privileges are
+  # then set with updateRole, which replaces them and can be repeated safely.
+  - changeSet:
+      id: sale-006-create-role-sales-reader
+      author: SergioAndres17
+      failOnError: false
+      changes:
+        - runCommand:
+            command: '{ "createRole": "sales_reader", "privileges": [], "roles": [] }'
+      rollback:
+        - runCommand:
+            command: '{ "dropRole": "sales_reader" }'
+  - changeSet:
+      id: sale-007-privileges-sales-reader
+      author: SergioAndres17
+      changes:
+        - runCommand:
+            command: '{ "updateRole": "sales_reader", "privileges": [ { "resource": { "db": "sales", "collection": "sale" }, "actions": ["find"] } ] }'
+      rollback:
+        - runCommand:
+            command: '{ "updateRole": "sales_reader", "privileges": [] }'
+  - changeSet:
+      id: sale-008-create-role-sales-writer
+      author: SergioAndres17
+      failOnError: false
+      changes:
+        - runCommand:
+            command: '{ "createRole": "sales_writer", "privileges": [], "roles": [] }'
+      rollback:
+        - runCommand:
+            command: '{ "dropRole": "sales_writer" }'
+  # No `remove` action: nothing in the system deletes a sale; it is voided (active=false).
+  - changeSet:
+      id: sale-009-privileges-sales-writer
+      author: SergioAndres17
+      changes:
+        - runCommand:
+            command: '{ "updateRole": "sales_writer", "privileges": [ { "resource": { "db": "sales", "collection": "sale" }, "actions": ["find", "insert", "update"] } ] }'
+      rollback:
+        - runCommand:
+            command: '{ "updateRole": "sales_writer", "privileges": [] }'
+  # Fails if sales_app does not exist: a missing service user is detected, not hidden.
+  # grantRolesToUser is already idempotent.
+  - changeSet:
+      id: sale-010-grant-sales-writer-to-sales-app
+      author: SergioAndres17
+      changes:
+        - adminCommand:
+            command: '{ "grantRolesToUser": "sales_app", "roles": [ { "role": "sales_writer", "db": "sales" } ] }'
+      rollback:
+        - adminCommand:
+            command: '{ "revokeRolesFromUser": "sales_app", "roles": [ { "role": "sales_writer", "db": "sales" } ] }'

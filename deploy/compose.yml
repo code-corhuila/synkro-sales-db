@@ -1,0 +1,24 @@
+name: synkro-sales-db
+
+# The migration runner only. The MongoDB instance, its volume and its
+# bootstrap belong to infrastructure (synkro-infra-mongo), not to this repo.
+services:
+  sales-db-migrate:
+    build:
+      context: .
+      dockerfile: liquibase.Dockerfile
+    image: synkro-sales-db-runner:local
+    profiles: [tooling]
+    environment:
+      LIQUIBASE_COMMAND_URL: ${MONGODB_URI:?set MONGODB_URI - see .env.example}/${MONGODB_DATABASE:?set MONGODB_DATABASE - see .env.example}?${MONGODB_OPTIONS:-}
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: changelog/changelog-master.yaml
+      LIQUIBASE_LOG_LEVEL: info
+    volumes: ["../:/liquibase/changelog-root:ro"]
+    working_dir: /liquibase/changelog-root
+    command: ["update"]
+    networks: [platform]
+
+networks:
+  platform:
+    external: true
+    name: ${MONGODB_NETWORK:-platform}

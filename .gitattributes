@@ -1,0 +1,6 @@
+# Files read on Linux (CI, the runner image) keep LF whatever core.autocrlf says.
+*.yaml text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+*.Dockerfile text eol=lf
+*.js text eol=lf

@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Destructive fixtures are allowed only in this repository's tmpfs CI instance.
+set -euo pipefail
+source "$(dirname "$0")/../ci-env.sh"
+require_disposable_database
+source deploy/ci/check-output.sh
+source deploy/ci/mongosh.sh
+admin() {
+  ci_mongosh admin
+}
+update() { timeout 120 docker compose --env-file .env.example -f deploy/compose.yml run --rm -T sales-db-migrate update; }
+reset_database() {
+  admin <<'JS'
+db.getSiblingDB('admin').updateUser('sales_app', {roles: []});
+db.dropAllRoles();
+db.dropDatabase();
+JS
+}
+prepare_collection() {
+  DRIFT="$1" ci_mongosh admin <<'JS'
+const fs = require('fs');
+const schema = JSON.parse(fs.readFileSync('/tmp/sale-validator.json', 'utf8'));
+const options = {validationLevel: 'strict', validationAction: 'error', validator: schema};
+switch (process.env.DRIFT) {
+  case 'moderate': options.validationLevel = 'moderate'; break;
+  case 'warn': options.validationAction = 'warn'; break;
+  case 'required': schema.$jsonSchema.required.pop(); break;
+  case 'type': schema.$jsonSchema.properties.totalCents.bsonType = 'double'; break;
+}
+db.createCollection('sale', options);
+db.sale.insertOne({_id: 'drift-sentinel'}, {bypassDocumentValidation: true});
+JS
+}
+snapshot() {
+  admin <<'JS'
+print(EJSON.stringify({collection: db.getCollectionInfos({name:'sale'})[0], docs: db.sale.find().toArray(),
+  roles: db.getRoles({showPrivileges:true}).roles, user: db.getSiblingDB('admin').getUser('sales_app')}));
+JS
+}
+tmp=$(mktemp -d)
+trap 'rm -f "$tmp/before" "$tmp/after" "$tmp/update"; rmdir "$tmp"' EXIT
+docker cp deploy/ci/tests/sale-validator.json "$CI_MONGO_CONTAINER:/tmp/sale-validator.json"
+for drift in moderate warn required type; do
+  reset_database
+  prepare_collection "$drift"
+  snapshot > "$tmp/before"
+  if update > "$tmp/update" 2>&1; then echo "FAIL accepted collection drift: $drift"; exit 1; fi
+  grep -q incompatible "$tmp/update"
+  snapshot > "$tmp/after"
+  cmp "$tmp/before" "$tmp/after"
+  echo "PASS $drift collection rejected without changing UUID, validator or documents"
+done
+for role in sales_reader sales_writer; do
+  reset_database
+  admin <<JS
+db.createRole({role: '$role', privileges: [{resource:{db:'sales',collection:'sale'}, actions:['find','remove']}], roles:[]});
+JS
+  snapshot > "$tmp/before"
+  if update > "$tmp/update" 2>&1; then echo "FAIL accepted role drift: $role"; exit 1; fi
+  grep -q incompatible "$tmp/update"
+  snapshot > "$tmp/after"
+  cmp "$tmp/before" "$tmp/after"
+  echo "PASS incompatible $role rejected without privilege repair"
+done
+reset_database
+prepare_collection compatible
+admin <<'JS'
+db.createRole({role:'sales_reader', privileges:[{resource:{db:'sales',collection:'sale'}, actions:['find']}], roles:[]});
+db.createRole({role:'sales_writer', privileges:[{resource:{db:'sales',collection:'sale'}, actions:['find','insert','update']}], roles:[]});
+JS
+no_fail_lines update
+admin <<'JS'
+if (db.sale.countDocuments({_id:'drift-sentinel'}) !== 1) throw new Error('compatible collection was replaced');
+JS
+echo 'PASS compatible existing collection and roles migrate safely'
+update > "$tmp/update" 2>&1
+grep -Eq 'Run:[[:space:]]+0$' "$tmp/update"
+echo 'PASS compatible existing roles apply zero changes on repeat'
+
+# A real server failure in createRole while compatible roles exist used to be
+# suppressed, followed by successful updateRole. enableTestCommands is CI-only.
+reset_database
+admin <<'JS'
+db.createRole({role:'sales_reader', privileges:[{resource:{db:'sales',collection:'sale'}, actions:['find']}], roles:[]});
+db.createRole({role:'sales_writer', privileges:[{resource:{db:'sales',collection:'sale'}, actions:['find','insert','update']}], roles:[]});
+db.adminCommand({configureFailPoint:'failCommand', mode:{times:1}, data:{failCommands:['createRole'], errorCode:13}});
+JS
+if update > "$tmp/update" 2>&1; then echo 'FAIL suppressed unexpected createRole error'; exit 1; fi
+grep -Eq 'not authorized|failOnError|Unauthorized' "$tmp/update"
+admin <<'JS'
+db.adminCommand({configureFailPoint:'failCommand', mode:'off'});
+JS
+echo 'PASS unexpected real createRole failure propagates'
+reset_database
+
+# Confirm the real rollback error also stops the sale-check orchestration.
+update > "$tmp/update" 2>&1
+admin <<'JS'
+db.adminCommand({configureFailPoint:'failCommand', mode:{times:1}, data:{failCommands:['dropRole'], errorCode:13}});
+JS
+if bash deploy/ci/sale-check.sh > "$tmp/update" 2>&1; then echo 'FAIL accepted unexpected rollback error'; exit 1; fi
+grep -q 'Command failed with error 13' "$tmp/update"
+if grep -q '== case 6: re-apply' "$tmp/update"; then echo 'FAIL reapplied after failed rollback'; exit 1; fi
+admin <<'JS'
+db.adminCommand({configureFailPoint:'failCommand', mode:'off'});
+JS
+echo 'PASS real failed rollback returns nonzero and prevents reapplication'
+reset_database
+echo 'ALL MIGRATION REGRESSIONS PASSED'
