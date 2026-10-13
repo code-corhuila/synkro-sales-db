@@ -4,6 +4,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/ci-env.sh"
+source "$(dirname "$0")/mongosh.sh"
 require_disposable_database
 RUNNER_TIMEOUT="${RUNNER_TIMEOUT:-90}"
 
@@ -21,8 +22,9 @@ print_output() {
 
 # Collections the migrations created (comma-separated), i.e. all but Liquibase's own bookkeeping.
 domain_collections() {
-  docker exec "$CI_MONGO_CONTAINER" mongosh --quiet "mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@localhost:27017/${MONGODB_DATABASE}?authSource=admin" --eval '
-    print(db.getCollectionNames().filter(n => !n.startsWith("DATABASECHANGELOG")).join(","))'
+  ci_mongosh admin <<'JS'
+print(db.getCollectionNames().filter(n => !n.startsWith("DATABASECHANGELOG")).join(','))
+JS
 }
 
 echo "== Case 1: first apply on a fresh replica set"
