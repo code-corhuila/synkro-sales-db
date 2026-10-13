@@ -3,9 +3,9 @@
 # start-replica-set.sh. Run from the repository root.
 set -uo pipefail
 
-export MONGODB_URI="${MONGODB_URI:-mongodb://synkro-mongo:27017}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@synkro-mongo:27017}"
 export MONGODB_DATABASE="${MONGODB_DATABASE:-sales}"
-export MONGODB_OPTIONS="${MONGODB_OPTIONS:-replicaSet=rs0&serverSelectionTimeoutMS=5000}"
+export MONGODB_OPTIONS="${MONGODB_OPTIONS:-replicaSet=rs0&authSource=admin&serverSelectionTimeoutMS=5000}"
 RUNNER_TIMEOUT="${RUNNER_TIMEOUT:-90}"
 
 run_migrations() {
@@ -14,18 +14,18 @@ run_migrations() {
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# Collections the migrations created, i.e. all but Liquibase's own bookkeeping.
+# Collections the migrations created (comma-separated), i.e. all but Liquibase's own bookkeeping.
 domain_collections() {
-  docker exec synkro-mongo mongosh --quiet "$MONGODB_DATABASE" --eval '
-    db.getCollectionNames().filter(n => !n.startsWith("DATABASECHANGELOG")).length'
+  docker exec synkro-mongo mongosh --quiet "mongodb://admin:${CI_ADMIN_PASSWORD:-ci-admin-pw}@localhost:27017/${MONGODB_DATABASE}?authSource=admin" --eval '
+    print(db.getCollectionNames().filter(n => !n.startsWith("DATABASECHANGELOG")).join(","))'
 }
 
-echo "== Case 1: empty changelog on a fresh replica set"
+echo "== Case 1: first apply on a fresh replica set"
 out=$(run_migrations); status=$?
 echo "$out" | tail -n 12
 [ "$status" -eq 0 ] || fail "case 1: runner exited $status"
-[ "$(domain_collections)" = "0" ] || fail "case 1: expected zero collections created by the migrations"
-echo "PASS case 1: runner succeeded, zero collections created"
+[ "$(domain_collections)" = "sale" ] || fail "case 1: expected exactly the sale collection"
+echo "PASS case 1: runner succeeded, the sale collection exists"
 
 echo "== Case 2: apply again, expect zero additional changes"
 out=$(run_migrations); status=$?
