@@ -52,3 +52,13 @@ databaseChangeLog:
       rollback:
         - adminCommand:
             command: '{ "revokeRolesFromUser": "sales_app", "roles": [ { "role": "sales_writer", "db": "sales" } ] }'
+  # updateRole replaces the privilege list, so the sale entry is restated.
+  - changeSet:
+      id: sale-014-privileges-sales-writer-counter
+      author: SergioAndres17
+      changes:
+        - runCommand:
+            command: '{ "updateRole": "sales_writer", "privileges": [ { "resource": { "db": "sales", "collection": "sale" }, "actions": ["find", "insert", "update"] }, { "resource": { "db": "sales", "collection": "sale_counter" }, "actions": ["find", "insert", "update"] } ] }'
+      rollback:
+        - runCommand:
+            command: '{ "updateRole": "sales_writer", "privileges": [ { "resource": { "db": "sales", "collection": "sale" }, "actions": ["find", "insert", "update"] } ] }'

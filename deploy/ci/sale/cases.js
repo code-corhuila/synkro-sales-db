@@ -35,10 +35,16 @@ if (phase === "structure") {
   report(info && info.options.validationLevel === "strict" && info.options.validationAction === "error",
     "case 1b: validationLevel strict, validationAction error");
   const idx = db.sale.getIndexes().map((i) => i.name).sort().join(",");
-  const want = ["_id_", "idx_sale_created_by_date", "idx_sale_customer_id_date", "idx_sale_date", "uq_sale_idempotency_key"].join(",");
+  const want = ["_id_", "idx_sale_created_by_date", "idx_sale_customer_id_date", "idx_sale_date", "uq_sale_commercial_number", "uq_sale_idempotency_key"].join(",");
   report(idx === want, "case 1c: indexes", idx);
   const u = db.sale.getIndexes().find((i) => i.name === "uq_sale_idempotency_key");
   report(u && u.unique === true, "case 1d: uq_sale_idempotency_key is unique");
+  const c = db.sale.getIndexes().find((i) => i.name === "uq_sale_commercial_number");
+  report(c && c.unique === true && JSON.stringify(c.partialFilterExpression) === '{"commercialNumber":{"$exists":true}}',
+    "case 1g: uq_sale_commercial_number is unique and partial");
+  const counter = db.getCollectionInfos({ name: "sale_counter" })[0];
+  report(counter && counter.options.validationLevel === "strict" && counter.options.validationAction === "error",
+    "case 1h: sale_counter exists with a strict validator");
   const roles = db.getRoles({ rolesInfo: 1, showPrivileges: true }).roles.map((r) => r.role).sort().join(",");
   report(roles === "sales_reader,sales_writer", "case 1e: roles exist", roles);
   const user = db.getSiblingDB("admin").getUser("sales_app");
@@ -70,6 +76,28 @@ rejects("case 3f: details with 101 items", sale({}, many(101)));
 rejects("case 3g: quantity 0", sale({}, [line(1, { quantity: NumberInt(0) })]));
 rejects("case 3g: unitPriceCents 0", sale({}, [line(1, { unitPriceCents: NumberLong("0") })]));
 rejects("case 3g: subtotalCents 0", sale({}, [line(1, { subtotalCents: NumberLong("0") })]));
+
+// HU-VEN-20: optional commercial number and its yearly counter.
+accepts("case 6a: valid commercialNumber", sale({ commercialNumber: "VEN-2026-000001" }));
+rejects("case 6b: duplicate commercialNumber", sale({ commercialNumber: "VEN-2026-000001" }), 11000);
+accepts("case 6c: sales without a number do not collide", sale());
+accepts("case 6c: a second sale without a number does not collide", sale());
+for (const bad of ["VEN-000001", "ven-2026-000001", "VEN-2026-00001", "VEN-2026-0000001", "VEN-26-000001", 7])
+  rejects(`case 6d: invalid commercialNumber ${bad}`, sale({ commercialNumber: bad }));
+const counters = db.sale_counter;
+const counterAccepts = (name, doc) => { try { counters.insertOne(doc); report(true, name); } catch (e) { report(false, name, e.message.slice(0, 110)); } };
+const counterRejects = (name, doc) => { try { counters.insertOne(doc); report(false, name, "ACCEPTED"); } catch (e) { report(e.code === 121, name, `code ${e.code}`); } };
+counterAccepts("case 7a: valid yearly counter", { _id: "VEN-2090", seq: NumberLong("1") });
+counterRejects("case 7b: counter id without year", { _id: "VEN", seq: NumberLong("1") });
+counterRejects("case 7b: counter seq as int", { _id: "VEN-2091", seq: NumberInt(1) });
+counterRejects("case 7b: counter extra field", { _id: "VEN-2092", seq: NumberLong("1"), x: 1 });
+try {
+  counters.updateOne({ _id: "VEN-2090" }, { $set: { seq: NumberLong("999999") } });
+  counters.updateOne({ _id: "VEN-2090" }, { $inc: { seq: NumberLong("1") } });
+  report(false, "case 7c: increment past 999999", "was ACCEPTED");
+} catch (e) { report(e.code === 121, "case 7c: increment past 999999 is rejected by the database", `code ${e.code}`); }
+const atCeiling = counters.findOne({ _id: "VEN-2090" });
+report(atCeiling && String(atCeiling.seq) === "999999", "case 7c: counter stays at its ceiling after the rejection");
 
 const dup = sale();
 accepts("case 4a: first sale with a key", dup);
