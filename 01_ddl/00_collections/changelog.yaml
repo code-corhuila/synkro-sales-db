@@ -60,3 +60,37 @@ databaseChangeLog:
       rollback:
         - dropCollection:
             collectionName: sale
+
+  # One counter document per year ("VEN-2026"), advanced atomically by the Sales API.
+  # The validator makes the six-digit ceiling a database rule too: an increment past
+  # 999999 is rejected instead of producing a longer number.
+  - changeSet:
+      id: sale-012-create-sale-counter
+      author: SergioAndres17
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - collectionExists:
+                collectionName: sale_counter
+      changes:
+        - createCollection:
+            collectionName: sale_counter
+            options: |
+              {
+                "validationLevel": "strict",
+                "validationAction": "error",
+                "validator": {
+                  "$jsonSchema": {
+                    "bsonType": "object",
+                    "additionalProperties": false,
+                    "required": ["_id", "seq"],
+                    "properties": {
+                      "_id": { "bsonType": "string", "pattern": "^VEN-[1-9][0-9]{3}$" },
+                      "seq": { "bsonType": "long", "minimum": 0, "maximum": 999999 }
+                    }
+                  }
+                }
+              }
+      rollback:
+        - dropCollection:
+            collectionName: sale_counter
