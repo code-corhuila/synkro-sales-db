@@ -15,6 +15,13 @@ attempt("case 5b: sales_app can find", () => { if (db.sale.countDocuments({ _id:
 attempt("case 5c: sales_app can update", () => db.sale.updateOne({ _id: U }, { $set: { active: false } }), false);
 attempt("case 5d: sales_app cannot deleteOne", () => db.sale.deleteOne({ _id: U }), true);
 attempt("case 5e: sales_app cannot deleteMany", () => db.sale.deleteMany({}), true);
+attempt("case 5h: sales_app can insert a yearly counter", () => db.sale_counter.insertOne({ _id: "VEN-2080", seq: NumberLong("1") }), false);
+attempt("case 5i: sales_app can find the counter", () => { if (db.sale_counter.countDocuments({ _id: "VEN-2080" }) !== 1) throw new Error("not found"); }, false);
+attempt("case 5j: sales_app can advance the counter atomically", () => {
+  const r = db.sale_counter.findOneAndUpdate({ _id: "VEN-2080" }, { $inc: { seq: NumberLong("1") } }, { returnDocument: "after" });
+  if (String(r.seq) !== "2") throw new Error("seq=" + r.seq);
+}, false);
+attempt("case 5k: sales_app cannot delete counters", () => db.sale_counter.deleteOne({ _id: "VEN-2080" }), true);
 attempt("case 5f: sales_app cannot read another database", () => db.getSiblingDB("other").x.findOne(), true);
 attempt("case 5g: sales_app cannot write another database", () => db.getSiblingDB("other").x.insertOne({ a: 1 }), true);
 quit(failed ? 1 : 0);
