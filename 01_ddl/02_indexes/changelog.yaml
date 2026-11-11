@@ -49,3 +49,17 @@ databaseChangeLog:
         - dropIndex:
             collectionName: sale
             keys: '{ "idempotencyKey": 1 }'
+  # Partial, so sales without a number (none are expected, but the field is optional)
+  # never collide on a missing value.
+  - changeSet:
+      id: sale-013-index-commercial-number
+      author: SergioAndres17
+      changes:
+        - createIndex:
+            collectionName: sale
+            keys: '{ "commercialNumber": 1 }'
+            options: '{ "name": "uq_sale_commercial_number", "unique": true, "partialFilterExpression": { "commercialNumber": { "$exists": true } } }'
+      rollback:
+        - dropIndex:
+            collectionName: sale
+            keys: '{ "commercialNumber": 1 }'
