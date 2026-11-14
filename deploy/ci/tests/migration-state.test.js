@@ -6,14 +6,18 @@ const model = require('./sale-validator.json');
 const clone = value => JSON.parse(JSON.stringify(value));
 const guardPath = path.resolve(__dirname, '../../migration-state.js');
 const guard = () => require(guardPath);
-const privileges = actions => [{ resource: { db: 'sales', collection: 'sale' }, actions }];
+const privileges = (actions, collections = ['sale']) => collections.map(collection => ({ resource: { db: 'sales', collection }, actions }));
+const counterOptions = () => ({ validationLevel: 'strict', validationAction: 'error', validator: { $jsonSchema: {
+  bsonType: 'object', additionalProperties: false, required: ['_id', 'seq'],
+  properties: { _id: { bsonType: 'string', pattern: '^VEN-[1-9][0-9]{3}$' }, seq: { bsonType: 'long', minimum: 0, maximum: 999999 } } } } });
 function state() {
   return {
     collection: { name: 'sale', type: 'collection', options: {
-      validationLevel: 'strict', validationAction: 'error', validator: clone(model),
+      validationLevel: 'strict', validationAction: 'error', validator: clone(guard().currentCollectionOptions().validator),
     } },
+    counter: { name: 'sale_counter', type: 'collection', options: counterOptions() },
     roles: ['sales_reader', 'sales_writer'].map(role => ({ role, db: 'sales', roles: [],
-      privileges: privileges(role === 'sales_reader' ? ['find'] : ['find', 'insert', 'update']) })),
+      privileges: role === 'sales_reader' ? privileges(['find']) : privileges(['find', 'insert', 'update'], ['sale', 'sale_counter']) })),
     user: { user: 'sales_app', roles: [{ role: 'sales_writer', db: 'sales' }] },
     indexes: [
       { name: '_id_', key: { _id: 1 } },
@@ -21,6 +25,7 @@ function state() {
       { name: 'idx_sale_created_by_date', key: { createdBy: 1, date: -1 } },
       { name: 'idx_sale_customer_id_date', key: { customerId: 1, date: -1 } },
       { name: 'uq_sale_idempotency_key', key: { idempotencyKey: 1 }, unique: true },
+      { name: 'uq_sale_commercial_number', key: { commercialNumber: 1 }, unique: true, partialFilterExpression: { commercialNumber: { $exists: true } } },
     ],
   };
 }
@@ -28,7 +33,10 @@ function database(s) {
   const admin = { runCommand: () => ({ ok: 1, users: s.user ? [s.user] : [] }) };
   return { getName: () => 'sales', getSiblingDB: () => admin,
     runCommand(command) {
-      if (command.listCollections) return { ok: 1, cursor: { id: 0, firstBatch: s.collection ? [s.collection] : [] } };
+      if (command.listCollections) {
+        const found = [s.collection, s.counter].filter(c => c && c.name === command.filter.name);
+        return { ok: 1, cursor: { id: 0, firstBatch: found } };
+      }
       if (command.rolesInfo) return { ok: 1, roles: s.roles };
       if (command.listIndexes) return { ok: 1, cursor: { id: 0, firstBatch: s.indexes } };
       throw new Error('unexpected command');
@@ -37,7 +45,7 @@ function database(s) {
 }
 test('guard uses the exact approved model', () => assert.deepEqual(guard().collectionOptions().validator, model));
 test('fresh database permits preflight, requires final objects', async () => {
-  const s = state(); s.collection = null; s.roles = []; s.user.roles = []; s.indexes = [];
+  const s = state(); s.collection = null; s.counter = null; s.roles = []; s.user.roles = []; s.indexes = [];
   await guard().validateState(database(s), 'preflight');
   await assert.rejects(() => guard().validateState(database(s), 'postflight'));
 });
@@ -58,6 +66,10 @@ const drift = {
   'user another database': s => { s.user.roles.push({ role: 'readWrite', db: 'other' }); },
   'wrong compound index order': s => { s.indexes[2].key = { date: -1, createdBy: 1 }; },
   'wrong index options': s => { s.indexes[4].partialFilterExpression = { active: true }; },
+  'commercial number index not unique': s => { delete s.indexes[5].unique; },
+  'commercial number index not partial': s => { delete s.indexes[5].partialFilterExpression; },
+  'counter validator drift': s => { s.counter.options.validator.$jsonSchema.properties.seq.maximum = 9999999; },
+  'writer extra counter action': s => { s.roles[1].privileges[1].actions.push('remove'); },
 };
 for (const [name, mutate] of Object.entries(drift)) test(`rejects ${name} without changing state`, async () => {
   const s = state(); mutate(s); const before = clone(s);
@@ -83,4 +95,19 @@ test('schema key and required-field ordering do not imply drift', async () => {
   const s = state(); s.collection.options.validator.$jsonSchema.required.reverse();
   s.roles[1].privileges[0].actions.reverse();
   await guard().validateState(database(s), 'preflight');
+});
+
+test('before the HU-VEN-20 migration the original state is still accepted, but not as final', async () => {
+  const s = state();
+  s.collection.options.validator = clone(model); s.counter = null; s.indexes.pop();
+  s.roles[1].privileges = privileges(['find', 'insert', 'update']);
+  await guard().validateState(database(s), 'preflight');
+  await assert.rejects(() => guard().validateState(database(s), 'postflight'), /incompatible/);
+});
+test('postflight requires the counter collection and the counter grant', async () => {
+  const validate = guard().validateState;
+  const noCounter = state(); noCounter.counter = null;
+  await assert.rejects(() => validate(database(noCounter), 'postflight'), /sale_counter/);
+  const noGrant = state(); noGrant.roles[1].privileges = privileges(['find', 'insert', 'update']);
+  await assert.rejects(() => validate(database(noGrant), 'postflight'), /sales_writer/);
 });

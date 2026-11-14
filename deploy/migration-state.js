@@ -8,6 +8,20 @@ function collectionOptions() {
   const options = yaml.match(/options: \|\s*([\s\S]*?)\n\s+rollback:/)[1];
   return JSON.parse(options.replace(/\$\{uuid_field\}/g, uuid));
 }
+// HU-VEN-20 additive state: the validator accepts an optional commercialNumber. The
+// original definition above is never edited; both are valid until the migration ran.
+function currentCollectionOptions() {
+  const options = collectionOptions();
+  options.validator.$jsonSchema.properties.commercialNumber =
+    {bsonType: 'string', pattern: '^VEN-[1-9][0-9]{3}-[0-9]{6}$'};
+  return options;
+}
+const counterOptions = () => ({
+  validationLevel: 'strict', validationAction: 'error',
+  validator: {$jsonSchema: {bsonType: 'object', additionalProperties: false, required: ['_id', 'seq'],
+    properties: {_id: {bsonType: 'string', pattern: '^VEN-[1-9][0-9]{3}$'},
+      seq: {bsonType: 'long', minimum: 0, maximum: 999999}}}},
+});
 // Object key order is irrelevant; only set-valued arrays are sorted. Index
 // keys are compared separately because compound key order is significant.
 function canonical(value, key = '') {
@@ -36,7 +50,10 @@ const indexDefinitions = [
   {name: 'idx_sale_created_by_date', key: {createdBy: 1, date: -1}},
   {name: 'idx_sale_customer_id_date', key: {customerId: 1, date: -1}},
   {name: 'uq_sale_idempotency_key', key: {idempotencyKey: 1}, unique: true},
+  {name: 'uq_sale_commercial_number', key: {commercialNumber: 1}, unique: true,
+    partialFilterExpression: {commercialNumber: {$exists: true}}},
 ];
+const privilegesFor = (collection, actions) => ({resource: {db: 'sales', collection}, actions});
 async function validateState(database, phase) {
   if (!['preflight', 'postflight'].includes(phase)) throw new Error('invalid validation phase');
   requireMatch(await database.getName() === 'sales', 'target database (expected sales)');
@@ -44,7 +61,8 @@ async function validateState(database, phase) {
   const collections = (await command(database, {listCollections: 1, filter: {name: 'sale'}})).cursor.firstBatch;
   const info = collections[0];
   if (info) {
-    requireMatch(info.type === 'collection' && equal(info.options, collectionOptions()), 'sale collection validator/options');
+    requireMatch(info.type === 'collection' && (equal(info.options, currentCollectionOptions()) ||
+      (!complete && equal(info.options, collectionOptions()))), 'sale collection validator/options');
     const indexes = (await command(database, {listIndexes: 'sale'})).cursor.firstBatch;
     for (const index of indexes) {
       const wanted = indexDefinitions.find(i => i.name === index.name);
@@ -53,17 +71,24 @@ async function validateState(database, phase) {
       requireMatch(wanted && equal(definition, wanted) &&
         JSON.stringify(Object.entries(index.key)) === JSON.stringify(Object.entries(wanted.key)), `sale index ${index.name}`);
     }
-    if (complete) requireMatch(indexes.length === indexDefinitions.length, 'four sale indexes and _id index');
+    if (complete) requireMatch(indexes.length === indexDefinitions.length, 'five sale indexes and _id index');
   } else requireMatch(!complete, 'sale collection');
+
+  const counters = (await command(database, {listCollections: 1, filter: {name: 'sale_counter'}})).cursor.firstBatch[0];
+  if (counters) requireMatch(counters.type === 'collection' && equal(counters.options, counterOptions()), 'sale_counter validator/options');
+  else requireMatch(!complete, 'sale_counter collection');
 
   const roles = (await command(database, {rolesInfo: [{role: 'sales_reader', db: 'sales'},
     {role: 'sales_writer', db: 'sales'}], showPrivileges: true})).roles;
   for (const name of ['sales_reader', 'sales_writer']) {
     const role = roles.find(r => r.role === name && r.db === 'sales');
     if (!role) { requireMatch(!complete, name); continue; }
-    const actions = name === 'sales_reader' ? ['find'] : ['find', 'insert', 'update'];
-    requireMatch(equal(role.roles, []) && equal(role.privileges,
-      [{resource: {db: 'sales', collection: 'sale'}, actions}]), `${name} privileges/inherited roles`);
+    const sale = privilegesFor('sale', name === 'sales_reader' ? ['find'] : ['find', 'insert', 'update']);
+    const accepted = [[sale]];
+    if (name === 'sales_writer') accepted.unshift([sale, privilegesFor('sale_counter', ['find', 'insert', 'update'])]);
+    // Before the HU-VEN-20 grant the writer holds only the sale privilege; afterwards it must hold both.
+    requireMatch(equal(role.roles, []) && accepted.some((wanted, i) =>
+      equal(role.privileges, wanted) && (!complete || i === 0)), `${name} privileges/inherited roles`);
   }
   const users = (await command(await database.getSiblingDB('admin'), {usersInfo: 'sales_app', showPrivileges: true})).users;
   requireMatch(users.length === 1, 'bootstrapped sales_app user');
@@ -90,4 +115,4 @@ function validateMigrationOutput(text, migrationCommand = 'update') {
     if (/^FAIL/.test(line)) throw new Error(`failed migration assertion: ${line}`);
   }
 }
-module.exports = {collectionOptions, validateState, validateMigrationOutput};
+module.exports = {collectionOptions, currentCollectionOptions, validateState, validateMigrationOutput};

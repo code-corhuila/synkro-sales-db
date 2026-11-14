@@ -1,1 +1,92 @@
-databaseChangeLog: []
+databaseChangeLog:
+  # Additive: commercialNumber is optional, so every stored sale stays valid and
+  # nothing is rewritten. The original validator in 00_collections is never edited;
+  # the rollback restores it with the same collMod.
+  - changeSet:
+      id: sale-011-validator-commercial-number
+      author: SergioAndres17
+      changes:
+        - runCommand:
+            command: |
+              {
+                "collMod": "sale",
+                "validationLevel": "strict",
+                "validationAction": "error",
+                "validator": {
+                  "$jsonSchema": {
+                    "bsonType": "object",
+                    "additionalProperties": false,
+                    "required": ["_id", "customerId", "createdBy", "date", "totalCents", "active", "idempotencyKey", "details"],
+                    "properties": {
+                      "_id": ${uuid_field},
+                      "customerId": ${uuid_field},
+                      "createdBy": ${uuid_field},
+                      "date": { "bsonType": "date" },
+                      "totalCents": { "bsonType": "long", "minimum": 0 },
+                      "active": { "bsonType": "bool" },
+                      "idempotencyKey": { "bsonType": "string", "minLength": 8, "maxLength": 128 },
+                      "commercialNumber": { "bsonType": "string", "pattern": "^VEN-[1-9][0-9]{3}-[0-9]{6}$" },
+                      "details": {
+                        "bsonType": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                          "bsonType": "object",
+                          "additionalProperties": false,
+                          "required": ["detailId", "productId", "quantity", "unitPriceCents", "subtotalCents", "active"],
+                          "properties": {
+                            "detailId": ${uuid_field},
+                            "productId": ${uuid_field},
+                            "quantity": { "bsonType": "int", "minimum": 1 },
+                            "unitPriceCents": { "bsonType": "long", "minimum": 1 },
+                            "subtotalCents": { "bsonType": "long", "minimum": 1 },
+                            "active": { "bsonType": "bool" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+      rollback:
+        - runCommand:
+            command: |
+              {
+                "collMod": "sale",
+                "validationLevel": "strict",
+                "validationAction": "error",
+                "validator": {
+                  "$jsonSchema": {
+                    "bsonType": "object",
+                    "additionalProperties": false,
+                    "required": ["_id", "customerId", "createdBy", "date", "totalCents", "active", "idempotencyKey", "details"],
+                    "properties": {
+                      "_id": ${uuid_field},
+                      "customerId": ${uuid_field},
+                      "createdBy": ${uuid_field},
+                      "date": { "bsonType": "date" },
+                      "totalCents": { "bsonType": "long", "minimum": 0 },
+                      "active": { "bsonType": "bool" },
+                      "idempotencyKey": { "bsonType": "string", "minLength": 8, "maxLength": 128 },
+                      "details": {
+                        "bsonType": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                          "bsonType": "object",
+                          "additionalProperties": false,
+                          "required": ["detailId", "productId", "quantity", "unitPriceCents", "subtotalCents", "active"],
+                          "properties": {
+                            "detailId": ${uuid_field},
+                            "productId": ${uuid_field},
+                            "quantity": { "bsonType": "int", "minimum": 1 },
+                            "unitPriceCents": { "bsonType": "long", "minimum": 1 },
+                            "subtotalCents": { "bsonType": "long", "minimum": 1 },
+                            "active": { "bsonType": "bool" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
